@@ -14,7 +14,7 @@
 # NO WARRANTY AT ALL
 #
 
-import sys, os, tempfile, MimeWriter, mimetools, mimetypes
+import sys, os, tempfile, MimeWriter, mimetools, mimetypes, re
 
 log = "\nLog:\n"
 
@@ -41,6 +41,12 @@ def get_pdf_content(path):
         pdf_content = os.popen("pdftotext -layout \"%s\" -" % path ).read().rstrip()
         return pdf_content
 
+# get's rid of smbprn.00000237
+# in smbprn.00000237 Microsoft Word - document2012-10-02.docx  
+def trim_smbprn(fname):
+	trimmed = re.sub(r'smbprn\.\d+\s', '', fname)
+	return trimmed
+
 argc = len(sys.argv)
 
 if argc == 1:
@@ -64,7 +70,8 @@ if argc < 6 or argc > 7:
 
 jobid = sys.argv[1]
 user = sys.argv[2]
-title = sys.argv[3]
+title = trim_smbprn(sys.argv[3])
+
 opts = sys.argv[5].split(" ")
 
 if argc == 7:
