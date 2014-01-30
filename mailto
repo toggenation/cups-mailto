@@ -37,6 +37,10 @@ def guess_type(file):
 def guess_extension(mimetype):
     return(mimetypes.guess_extension(mimetype))
 
+def get_pdf_content(path):
+        pdf_content = os.popen("pdftotext -layout \"%s\" -" % path ).read().rstrip()
+        return pdf_content
+
 argc = len(sys.argv)
 
 if argc == 1:
@@ -84,6 +88,9 @@ else:
     infile.close()
     if log:
         log = "%scopied stdin to %s\n" % (log, infilename)
+
+# this gets the formatted text to put in the body of the email
+contents = get_pdf_content(infilename)
 
 infile = open(infilename, "r")
 
@@ -135,7 +142,7 @@ body = mimemail.nextpart()
 
 body.addheader("Content-Transfer-Encoding", "8bit")
 
-body.startbody("text/plain").write("You printed %s with jobid %s\n%s" % (title, jobid, log))
+body.startbody("text/plain").write("%s\n\nYou printed %s with jobid %s\n%s" % (contents, title, jobid, log))
 
 attachment = mimemail.nextpart()
 type, enc = guess_type(infilename)
