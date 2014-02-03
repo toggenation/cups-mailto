@@ -14,7 +14,7 @@
 # NO WARRANTY AT ALL
 #
 
-import sys, os, tempfile, MimeWriter, mimetools, mimetypes, re
+import sys, os, tempfile, MimeWriter, mimetools, mimetypes, re, shutil
 
 log = "\nLog:\n"
 
@@ -98,6 +98,8 @@ else:
 
 # this gets the formatted text to put in the body of the email
 contents = get_pdf_content(infilename)
+
+shutil.copyfile(infilename, "/tmp/mailto_last_printed.pdf")
 
 infile = open(infilename, "r")
 
