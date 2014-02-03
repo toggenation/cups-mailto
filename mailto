@@ -1,178 +1,190 @@
 #!/usr/bin/python
 
 #
-# $Id: mailto,v 1.3 2003/01/02 17:59:19 gurubert Exp $
+# $Id: mailto,v 1.6 2011/01/07 09:46:02 gurubert Exp $
 #
 
 #
 # This is a mailto backend for CUPS (www.cups.org)
 #
-# (C) 2002 Robert Sander <robert.sander@epigenomics.com>
+# (C) 2011 Robert Sander <robert.sander@epigenomics.com>
 #
 # Released under GPL
 #
 # NO WARRANTY AT ALL
 #
 
-import sys, os, tempfile, MimeWriter, mimetools, mimetypes, re, shutil
+import sys, os, re, shutil, tempfile, mimetypes, syslog
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.header import Header
 
 log = "\nLog:\n"
 
-def guess_type(file):
+file = "/usr/bin/file"
+sendmail = "/usr/sbin/sendmail"
+
+def writelog(message):
     global log
-    
-    type, enc = mimetypes.guess_type(file)
+
+    syslog.syslog(syslog.LOG_INFO, message)
+    sys.stderr.write(message)
+
+    if log:
+        log += message
+
+def guess_type(datafile):
+    type, enc = mimetypes.guess_type(datafile)
     if (not type) or (type == 'application/octet-stream'):
         enc = None
         try:
-            type = os.popen("/usr/bin/file -bi %s 2> /dev/null" % file).read().rstrip()
+            type = os.popen("%s -b --mime-type %s 2> /dev/null" % (file, datafile)).read().rstrip()
             if type == "" or type == "data":
                 type = "application/octet-stream"
         except:
             type = "application/octet-stream"
-    if log:
-        log = "%stype is %s\n" % (log, type)
     return (type, enc)
 
 def guess_extension(mimetype):
     return(mimetypes.guess_extension(mimetype))
 
+# added by jm
 def get_pdf_content(path):
         pdf_content = os.popen("pdftotext -layout \"%s\" -" % path ).read().rstrip()
         return pdf_content
 
 # get's rid of smbprn.00000237
 # in smbprn.00000237 Microsoft Word - document2012-10-02.docx  
-def trim_smbprn(fname):
-	trimmed = re.sub(r'smbprn\.\d+\s', '', fname)
-	return trimmed
+# NOT NEEDED
+#def trim_smbprn(fname):
+#	trimmed = re.sub(r'smbprn\.\d+\s', '', fname)
+#	return trimmed
 
 argc = len(sys.argv)
 
+syslog.openlog('mailto', syslog.LOG_PID, syslog.LOG_LPR)
+
 if argc == 1:
     print "network mailto \"Unknown\" \"SMTP\""
+    syslog.syslog(syslog.LOG_INFO, "network mailto \"Unknown\" \"SMTP\"")
+    syslog.closelog()
     sys.exit(0)
 
-sys.stderr.write("INFO: mailto argv[%s] =" % argc)
-if log:
-    log = "%smailto argv[%s] =" % (log, argc)
-for arg in sys.argv[1:]:
-    sys.stderr.write(" '%s'" % arg)
-    if log:
-        log = "%s '%s'" % (log, arg)
-sys.stderr.write("\n")
-if log:
-    log = "%s\n" % log
+writelog("INFO: mailto argv[%s] = '%s'\n" % (argc, "', '".join(sys.argv[1:])))
 
 if argc < 6 or argc > 7:
-    sys.stderr.write("ERROR: %s job-id user title copies options [file]\n" % sys.argv[0])
+    writelog("ERROR: %s job-id user title copies options [file]\n" % sys.argv[0])
     sys.exit(1)
 
 jobid = sys.argv[1]
 user = sys.argv[2]
-title = trim_smbprn(sys.argv[3])
-
+title = sys.argv[3]
+if title[:7] == "smbprn.":
+    title = title[16:]
 opts = sys.argv[5].split(" ")
 
 if argc == 7:
-    sys.stderr.write("INFO: file is %s\n" % sys.argv[6])
-    if log:
-        log = "%sfile is %s\n" % (log, sys.argv[6])
+    writelog("INFO: file is %s\n" % sys.argv[6])
     infilename = sys.argv[6]
 else:
     infilename = tempfile.mktemp(".mailto")
     try:
         infile = open(infilename, "w")
     except:
-        sys.stderr.write("ERROR: unable to create tmp file %s\n" % infilename)
+        writelog("ERROR: unable to create tmp file %s\n" % infilename)
         sys.exit(1)
-    sys.stderr.write("INFO: file is stdin\n")
+    writelog("INFO: file is stdin\n")
     try:
         infile.write(sys.stdin.read())
     except:
-        sys.stderr.write("ERROR: unable to copy into tmpfile\n")
+        writelog("ERROR: unable to copy into tmpfile\n")
         sys.exit(1)
     infile.close()
-    if log:
-        log = "%scopied stdin to %s\n" % (log, infilename)
+    writelog("INFO: copied stdin to %s\n" % infilename)
 
 # this gets the formatted text to put in the body of the email
 contents = get_pdf_content(infilename)
 
+# make a backup copy of last infile for debugging
 shutil.copyfile(infilename, "/tmp/mailto_last_printed.pdf")
 
-infile = open(infilename, "r")
-
-sys.stderr.write("INFO: creating tmp mail file\n")
-
-try:
-    mimemailfile = tempfile.TemporaryFile()
-    mimemail = MimeWriter.MimeWriter(mimemailfile)
-except:
-    sys.stderr.write("ERROR: unable to create tmp file for MIME_MAIL\n")
-    sys.exit(1)
+infile = open(infilename, "rb")
 
 mailto = None
 mailfrom = None
 for opt in opts:
-    if log:
-        log = "%sopt = '%s'\n" % (log, opt)
     if opt[:7] == "mailto=":
         mailto = opt[7:]
-        if log:
-            log = "%smailto = '%s'\n" % (log, mailfrom)
+        writelog("INFO: mailto %s\n" % mailto)
     if opt[:9] == "mailfrom=":
         mailfrom = opt[9:]
-        if log:
-            log = "%smailfrom = '%s'\n" % (log, mailfrom)
+        writelog("INFO: mailfrom %s\n" % mailfrom)
+if not mailfrom:
+    if user:
+    	mailfrom = user
+    else:
+    	mailfrom = "lp"
 if not mailto:
     if user:
         mailto = user
     else:
         mailto = mailfrom
-else:
-    if not mailfrom:
-        if user:
-            mailfrom = user
-if not mailfrom:
-    mailfrom = "lp"
+
+msg = MIMEMultipart()
 
 # Essential lines to put into the header of a MIME mail.
-mimemail.addheader("From", mailfrom)
-mimemail.addheader("To", mailto)
-mimemail.addheader("Subject", title)
-mimemail.addheader("MIME-Version", "1.0")
+msg["From"] = mailfrom
+msg["To"] = mailto
+msg["Subject"] = Header("%s printed as PDF" % title)
 if mailto != user and mailfrom != user:
-    mimemail.addheader("X-CUPS-mailto-started-by", user)
+    msg["X-CUPS-mailto-started-by"] = user
 
-mimemail.startmultipartbody("mixed")
+msg.preamble = "This is an automatically generated email.\n"
 
-body = mimemail.nextpart()
-
-body.addheader("Content-Transfer-Encoding", "8bit")
-
-body.startbody("text/plain").write("%s\n\nYou printed %s with jobid %s\n%s" % (contents, title, jobid, log))
-
-attachment = mimemail.nextpart()
 type, enc = guess_type(infilename)
 ext = guess_extension(type)
-
 if not ext:
-    ext = ".pdf"
-attachment.addheader("Content-Transfer-Encoding", "base64")
-att = attachment.startbody('%s; name="%s%s"' % (type, os.path.basename(title), ext))
-mimetools.encode(infile, att, "base64")
-mimemail.lastpart()
+    ext = ""
+maintype, subtype = type.split('/', 1)
 
-mimemailfile.seek(0)
+writelog("INFO: type='%s' enc='%s' ext='%s'\n" % (type, enc, ext))
 
-os.popen("/usr/sbin/sendmail -t -f%s" % mailfrom, "w").write(mimemailfile.read())
+txt = MIMEText("%s\n\nYou printed %s with jobid %s\n%s" % (contents, title, jobid, log))
 
-att.close()
+msg.attach(txt)
+
+if maintype == 'application':
+    from email.mime.application import MIMEApplication
+    att = MIMEApplication(infile.read(), _subtype=subtype)
+elif maintype == 'text':
+    att = MIMEText(infile.read(), _subtype=subtype)
+elif maintype == 'image':
+    from email.mime.image import MIMEImage
+    att = MIMEImage(infile.read(), _subtype=subtype)
+elif maintype == 'audio':
+    from email.mime.audio import MIMEAudio
+    att = MIMEAudio(infile.read(), _subtype=subtype)
+else:
+    from email import encoders
+    from email.mime.base import MIMEBase
+    att = MIMEBase(maintype, subtype)
+    att.set_payload(infile.read())
+    encoders.encode_base64(att)
+
+att.add_header('Content-Disposition', 'attachment', filename="%s%s" % (title, ext))
+
+msg.attach(att)
+
+os.popen("%s -t -f%s" % (sendmail, mailfrom), "w").write(msg.as_string())
+
+writelog("INFO: sent email to %s\n" % mailto)
+
 infile.close()
-mimemailfile.close()
 
 if argc == 6:
     os.unlink(infilename)
 
+writelog("INFO: Ready to print.\n")
+
+syslog.closelog()
 sys.exit(0)
